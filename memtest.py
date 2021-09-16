@@ -212,8 +212,7 @@ class Dolphin(object):
             ctypes.pointer(buffer),
             size,
             ctypes.pointer(read))
-        
-        return result and read.value == size, buffer 
+        return result and read.value == size, buffer
     
     def write_ram(self, offset, data):
         buffer = (ctypes.c_char*len(data))(*data)
@@ -231,12 +230,12 @@ class Dolphin(object):
     def read_uint32(self, addr):
         assert addr >= 0x80000000
         success, value = self.read_ram(addr-0x80000000, 4)
-        
+
         if success:
             return struct.unpack(">I", value)[0]
         else:
             return None
-            
+
     def read_float(self, addr):
         assert addr >= 0x80000000
         success, value = self.read_ram(addr - 0x80000000, 4)
@@ -245,6 +244,11 @@ class Dolphin(object):
             return struct.unpack(">f", value)[0]
         else:
             return None
+
+    def write_float(self, addr, val):
+        assert addr >= 0x80000000
+        return self.write_ram(addr - 0x80000000, struct.pack(">f", val))
+
     
 """with open("ctypes.txt", "w") as f:
     for a in ctypes.__dict__:
@@ -266,23 +270,10 @@ if __name__ == "__main__":
         print("We found MEM1 and/or MEM2!", dolphin.address_start, dolphin.mem2_start)
     else:
         print("We didn't find it...")
-    """print(dolphin.write_ram(0, b"GMS"))
+    print(dolphin.write_ram(0, b"GMS"))
     success, result = dolphin.read_ram(0, 8)
     print(result[0:8])
     
     print(dolphin.write_ram(0, b"AWA"))
     success, result = dolphin.read_ram(0, 8)
-    print(result[0:8])"""
-    
-    kartctrlPtr = dolphin.read_uint32(0x803CC588)
-    print(hex(kartctrlPtr))
-    for i in range(8):
-        kartPtr = dolphin.read_uint32(kartctrlPtr+0xA0+i*4)
-        print(hex(kartPtr))
-        x = dolphin.read_float(kartPtr + 0x23C)
-        y = dolphin.read_float(kartPtr + 0x240)
-        z = dolphin.read_float(kartPtr + 0x244)
-
-        #self.karts[i].x = x
-        #self.karts[i].y = y
-        #self.karts[i].z = z
+    print(result[0:8])

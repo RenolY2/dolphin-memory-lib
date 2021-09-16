@@ -1,0 +1,2 @@
+python memtest.py
+pause

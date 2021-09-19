@@ -1,4 +1,4 @@
 #!/bin/bash
-echo "dolphin-memory-lib requires sudo permission to read and write to the emulator process memory."
-sudo python memtest_lin.py
+echo "dolphin-memory-lib requires you to run the library before you start a game on the emulator."
+python memorylib_lin.py
 read -n1 -r

@@ -121,7 +121,7 @@ class Dolphin(object):
         self.mem2_start = 0
         self.mem2_exists = False
         
-    def find_dolphin(self):
+    def find_dolphin(self, skip_pids=[]):
         entry = PROCESSENTRY32()
         
         entry.dwSize = sizeof(PROCESSENTRY32)
@@ -132,14 +132,16 @@ class Dolphin(object):
         self.pid = -1
         self.handle = -1
         
-        if ctypes.windll.kernel32.Process32First(snapshot, pointer(entry)):
-            if entry.szExeFile in (b"Dolphin.exe", b"DolphinQt2.exe", b"DolphinWx.exe"):
+        if ctypes.windll.kernel32.Process32First(snapshot, pointer(entry)):   
+            if entry.th32ProcessID not in skip_pids and entry.szExeFile in (b"Dolphin.exe", b"DolphinQt2.exe", b"DolphinWx.exe"):
                 self.pid = entry.th32ProcessID 
             else:
                 while ctypes.windll.kernel32.Process32Next(snapshot, pointer(entry)):
+                    if entry.th32ProcessID in skip_pids:
+                        continue
                     if entry.szExeFile in (b"Dolphin.exe", b"DolphinQt2.exe", b"DolphinWx.exe"):
                         self.pid = entry.th32ProcessID 
-                
+                    
             
         ctypes.windll.kernel32.CloseHandle(snapshot)
         
@@ -257,7 +259,8 @@ class Dolphin(object):
         
 if __name__ == "__main__":
     dolphin = Dolphin()
-
+    import multiprocessing 
+    
     if dolphin.find_dolphin():
 
         print("Found Dolphin!")
@@ -265,15 +268,53 @@ if __name__ == "__main__":
         print("Didn't find Dolphin")
 
     print(dolphin.pid, dolphin.handle)
+    """pipe = r'\\.\\PIPE\\dolphin-emu.'+str(dolphin.pid)
+    pipe = r'\\.\\pipe\\WiFiNetworkManagerTask'
+    print(pipe)
+    
+    with open(pipe, "r+b") as f:
+        pass"""
+    
 
     if dolphin.get_emu_info():
         print("We found MEM1 and/or MEM2!", dolphin.address_start, dolphin.mem2_start)
     else:
         print("We didn't find it...")
-    print(dolphin.write_ram(0, b"GMS"))
-    success, result = dolphin.read_ram(0, 8)
-    print(result[0:8])
     
-    print(dolphin.write_ram(0, b"AWA"))
-    success, result = dolphin.read_ram(0, 8)
-    print(result[0:8])
+    import random 
+    
+    from timeit import default_timer
+    
+    start = default_timer()
+    
+    randint = random.randint 
+    pack = struct.pack 
+    unpack = struct.unpack 
+    write_ram = dolphin.write_ram 
+    read_ram = dolphin.read_ram
+    
+    print("Testing WinApi method")
+    for i in range(500000):
+        value = randint(0, 2**32-1)
+        write_ram(0, pack(">I", value))
+        
+        success, result = read_ram(0, 4)
+        assert unpack(">I", result)[0] == value
+
+    print(default_timer()-start)
+    
+    from multiprocessing import shared_memory
+    mem = shared_memory.SharedMemory('dolphin-emu.'+str(dolphin.pid))
+    buf = mem.buf
+    
+    print("Testing Shared Memory Method")
+    start = default_timer()
+    for i in range(500000):
+        value = randint(0, 2**32-1)
+        buf[0:4] = pack(">I", value)
+        
+        result = bytes(buf[0:4])
+        assert unpack(">I", result)[0] == value
+    
+    print(default_timer()-start)
+    

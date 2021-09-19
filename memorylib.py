@@ -116,7 +116,7 @@ SOFTWARE."""
 class Dolphin(object):
     def __init__(self):
         self.pid = -1
-        self.shmem = None 
+        self.memory = None 
         
     def reset(self):
         self.pid = -1
@@ -151,13 +151,17 @@ class Dolphin(object):
         return True
     
     def init_shared_memory(self):
-        self.mem = shared_memory.SharedMemory('dolphin-emu.'+str(self.pid))
-    
+        try:
+            self.memory = shared_memory.SharedMemory('dolphin-emu.'+str(self.pid))
+            return True
+        except FileNotFoundError:
+            return False
+        
     def read_ram(self, offset, size):
-        return self.mem.buf[offset:offset+size]
+        return self.memory.buf[offset:offset+size]
     
     def write_ram(self, offset, data):
-        self.mem.buf[offset:offset+len(data)] = data
+        self.memory.buf[offset:offset+len(data)] = data
     
     def read_uint32(self, addr):
         assert addr >= 0x80000000
@@ -198,11 +202,10 @@ if __name__ == "__main__":
     print(dolphin.pid)
     
     dolphin.init_shared_memory()
-    """
-    if dolphin.get_emu_info():
-        print("We found MEM1 and/or MEM2!", dolphin.address_start, dolphin.mem2_start)
+    if dolphin.init_shared_memory():
+        print("We found MEM1 and/or MEM2!")
     else:
-        print("We didn't find it...")"""
+        print("We didn't find it...")
     
     import random 
     randint = random.randint

@@ -1,7 +1,9 @@
 import ctypes
 import struct
+from struct import pack, unpack
 from ctypes import wintypes, sizeof, addressof, POINTER, pointer
 from ctypes.wintypes import DWORD, ULONG, LONG, WORD
+from multiprocessing import shared_memory
 
 # Various Windows structs/enums needed for operation
 NULL = 0
@@ -84,8 +86,8 @@ class PSAPI_WORKING_SET_EX_INFORMATION(ctypes.Structure):
     #        print(i, getattr(self, i))
 
 
-# The following code is a port of aldelaro5's Dolphin memory access methods 
-# for Windows into Python+ctypes.
+# The find_dolphin function is based on WindowsDolphinProcess::findPID() from 
+# aldelaro5's Dolphin memory engine
 # https://github.com/aldelaro5/Dolphin-memory-engine
 
 """
@@ -114,12 +116,11 @@ SOFTWARE."""
 class Dolphin(object):
     def __init__(self):
         self.pid = -1
-        self.handle = -1
+        self.shmem = None 
         
-        self.address_start = 0
-        self.mem1_start = 0
-        self.mem2_start = 0
-        self.mem2_exists = False
+    def reset(self):
+        self.pid = -1
+        self.memory = None 
         
     def find_dolphin(self, skip_pids=[]):
         entry = PROCESSENTRY32()
@@ -130,7 +131,6 @@ class Dolphin(object):
         a = ULONG(addressof(entry))
         
         self.pid = -1
-        self.handle = -1
         
         if ctypes.windll.kernel32.Process32First(snapshot, pointer(entry)):   
             if entry.th32ProcessID not in skip_pids and entry.szExeFile in (b"Dolphin.exe", b"DolphinQt2.exe", b"DolphinWx.exe"):
@@ -148,108 +148,36 @@ class Dolphin(object):
         if self.pid == -1:
             return False 
         
-        self.handle = ctypes.windll.kernel32.OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE,
-            False, self.pid)
-        
         return True
     
-    def get_emu_info(self):
-        info = MEMORY_BASIC_INFORMATION()
-        MEM1_found = False
-        
-        p = NULL
-        
-        while ctypes.windll.kernel32.VirtualQueryEx(self.handle, ctypes.c_void_p(p), pointer(info), sizeof(info)) == sizeof(info):
-            
-            p += info.RegionSize 
-            
-            if info.RegionSize == 0x4000000:
-                region_base_address = info.BaseAddress
-                
-                if MEM1_found and info.BaseAddress > self.address_start + 0x10000000:
-                    break 
-                
-                page_info = PSAPI_WORKING_SET_EX_INFORMATION()
-                page_info.VirtualAddress = info.BaseAddress
-                
-                if ctypes.windll.psapi.QueryWorkingSetEx(
-                        self.handle,    
-                        pointer(page_info), 
-                        sizeof(PSAPI_WORKING_SET_EX_INFORMATION)
-                ):
-                    if (page_info.Valid):
-                        self.mem2_start = region_base_address
-                        self.mem2_exists = True 
-                        
-            elif not MEM1_found and info.RegionSize == 0x2000000 and info.Type == MEM_MAPPED:
-                page_info = PSAPI_WORKING_SET_EX_INFORMATION()
-                page_info.VirtualAddress = info.BaseAddress
-                
-                if ctypes.windll.psapi.QueryWorkingSetEx(
-                    self.handle, 
-                    pointer(page_info), 
-                    sizeof(PSAPI_WORKING_SET_EX_INFORMATION)
-                ):
-                    print(page_info.Valid)
-                    if (page_info.Valid):
-                        self.address_start = info.BaseAddress
-                        MEM1_found = True 
-                
-            if MEM1_found and self.mem2_exists:
-                break 
-        
-        if self.address_start == 0:
-            return False 
-        
-        return True
+    def init_shared_memory(self):
+        self.mem = shared_memory.SharedMemory('dolphin-emu.'+str(self.pid))
     
     def read_ram(self, offset, size):
-        buffer = (ctypes.c_char*size)()
-        read = ctypes.c_ulong(0)
-        
-        result = ctypes.windll.kernel32.ReadProcessMemory(
-            self.handle, 
-            ctypes.c_void_p(self.address_start+offset), 
-            ctypes.pointer(buffer),
-            size,
-            ctypes.pointer(read))
-        return result and read.value == size, buffer
+        return self.mem.buf[offset:offset+size]
     
     def write_ram(self, offset, data):
-        buffer = (ctypes.c_char*len(data))(*data)
-        read = ctypes.c_ulong(0)
-        
-        result = ctypes.windll.kernel32.WriteProcessMemory(
-            self.handle, 
-            ctypes.c_void_p(self.address_start+offset), 
-            ctypes.pointer(buffer),
-            len(data),
-            ctypes.pointer(read))
-        
-        return result and read.value == len(data)
+        self.mem.buf[offset:offset+len(data)] = data
     
     def read_uint32(self, addr):
         assert addr >= 0x80000000
-        success, value = self.read_ram(addr-0x80000000, 4)
+        value = self.read_ram(addr-0x80000000, 4)
 
-        if success:
-            return struct.unpack(">I", value)[0]
-        else:
-            return None
+        return unpack(">I", value)[0]
+    
+    def write_uint32(self, addr, val):
+        assert addr >= 0x80000000
+        return self.write_ram(addr - 0x80000000, pack(">I", val))
 
     def read_float(self, addr):
         assert addr >= 0x80000000
         success, value = self.read_ram(addr - 0x80000000, 4)
 
-        if success:
-            return struct.unpack(">f", value)[0]
-        else:
-            return None
+        return unpack(">f", value)[0]
 
     def write_float(self, addr, val):
         assert addr >= 0x80000000
-        return self.write_ram(addr - 0x80000000, struct.pack(">f", val))
+        return self.write_ram(addr - 0x80000000, pack(">f", val))
 
     
 """with open("ctypes.txt", "w") as f:
@@ -267,54 +195,31 @@ if __name__ == "__main__":
     else:
         print("Didn't find Dolphin")
 
-    print(dolphin.pid, dolphin.handle)
-    """pipe = r'\\.\\PIPE\\dolphin-emu.'+str(dolphin.pid)
-    pipe = r'\\.\\pipe\\WiFiNetworkManagerTask'
-    print(pipe)
+    print(dolphin.pid)
     
-    with open(pipe, "r+b") as f:
-        pass"""
-    
-
+    dolphin.init_shared_memory()
+    """
     if dolphin.get_emu_info():
         print("We found MEM1 and/or MEM2!", dolphin.address_start, dolphin.mem2_start)
     else:
-        print("We didn't find it...")
+        print("We didn't find it...")"""
     
     import random 
-    
+    randint = random.randint
     from timeit import default_timer
     
     start = default_timer()
     
-    randint = random.randint 
-    pack = struct.pack 
-    unpack = struct.unpack 
-    write_ram = dolphin.write_ram 
-    read_ram = dolphin.read_ram
-    
-    print("Testing WinApi method")
-    for i in range(500000):
-        value = randint(0, 2**32-1)
-        write_ram(0, pack(">I", value))
-        
-        success, result = read_ram(0, 4)
-        assert unpack(">I", result)[0] == value
-
-    print(default_timer()-start)
-    
-    from multiprocessing import shared_memory
-    mem = shared_memory.SharedMemory('dolphin-emu.'+str(dolphin.pid))
-    buf = mem.buf
-    
     print("Testing Shared Memory Method")
     start = default_timer()
-    for i in range(500000):
+    count = 500000
+    for i in range(count):
         value = randint(0, 2**32-1)
-        buf[0:4] = pack(">I", value)
+        dolphin.write_uint32(0x80000000, value)
         
-        result = bytes(buf[0:4])
-        assert unpack(">I", result)[0] == value
-    
-    print(default_timer()-start)
+        result = dolphin.read_uint32(0x80000000)
+        assert result == value
+    diff = default_timer()-start 
+    print(count/diff, "per sec")
+    print("time: ", diff)
     

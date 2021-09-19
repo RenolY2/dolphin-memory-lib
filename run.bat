@@ -1,2 +1,2 @@
-python memtest.py
+python memorylib.py
 pause

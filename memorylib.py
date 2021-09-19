@@ -175,7 +175,7 @@ class Dolphin(object):
 
     def read_float(self, addr):
         assert addr >= 0x80000000
-        success, value = self.read_ram(addr - 0x80000000, 4)
+        value = self.read_ram(addr - 0x80000000, 4)
 
         return unpack(">f", value)[0]
 
